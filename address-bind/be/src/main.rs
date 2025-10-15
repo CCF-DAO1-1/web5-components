@@ -18,6 +18,8 @@ struct Cli {
     ckb_url: String,
     #[arg(short, long, default_value = "ckb_testnet")]
     network: String,
+    #[arg(short, long, default_value = "http://localhost:3000")]
+    recovery_url: String,
     #[command(subcommand)]
     command: Commands,
 }
@@ -64,7 +66,8 @@ async fn main() {
             let tx_hash = H256::from_slice(&tx_hash_bytes).unwrap();
             let tx = verify::get_tx(&ckb_client, tx_hash.clone()).await.unwrap();
 
-            let ret = verify::verify_tx(&ckb_client, network_type, &tx).await;
+            let ret =
+                verify::verify_tx(&ckb_client, network_type, &tx, cli.recovery_url.as_str()).await;
             match ret {
                 Ok((from, to, timestamp)) => {
                     println!(
@@ -85,8 +88,15 @@ async fn main() {
             common_x::log::init_log_filter(log_filter);
             info!("args: {:?}", cli);
             let ckb_client = CkbRpcClient::new(cli.ckb_url.as_str());
-            let ret =
-                indexer::server(&ckb_client, network_type, db_url, *start_height, *port).await;
+            let ret = indexer::server(
+                &ckb_client,
+                network_type,
+                db_url,
+                *start_height,
+                *port,
+                cli.recovery_url.as_str(),
+            )
+            .await;
             if let Err(e) = ret {
                 info!("indexer server error: {e}");
             }

@@ -62,6 +62,7 @@ pub async fn verify_tx(
     ckb_client: &CkbRpcClient,
     network: NetworkType,
     tx: &Transaction,
+    recovery_url: &str,
 ) -> Result<(String, String, u64), String> {
     let inputs_count = tx.inputs.len();
     let outputs_count = tx.outputs.len();
@@ -105,9 +106,6 @@ pub async fn verify_tx(
     let sig = bind_info_with_sig.sig();
     let sig_bytes = sig.raw_data().to_vec();
     let bind_info_bytes = bind_info.as_slice();
-    if sig_bytes.len() != 65 {
-        return Err("sig_bytes len not equal 65".to_string());
-    }
 
     // transfer is to of bind info
     if bind_info.to().code_hash().raw_data() != output_lock_script.code_hash.as_bytes()
@@ -117,24 +115,55 @@ pub async fn verify_tx(
         return Err("bind_info_to not equal output_lock_script".to_string());
     }
 
-    // recover from address by sig
-    // message is hex string with 0x
-    let message = format!("Nervos Message:0x{}", hex::encode(bind_info_bytes));
-    let message_hash = ckb_hash::blake2b_256(message.as_bytes());
-    let mut sig: [u8; 64] = [0; 64];
-    sig.copy_from_slice(&sig_bytes[0..64]);
-    let recovery_id: u8 = sig_bytes[64];
-    let ret = recover(message_hash, sig, recovery_id);
-    if let Err(_e) = ret {
-        return Err("recover error".to_string());
-    }
-    let pubkey = ret.unwrap();
-    let pubkey_hash = ckb_hash::blake2b_256(pubkey.serialize());
-    let from_args = pubkey_hash[0..20].to_vec();
-
-    let timestamp = u64::from_le_bytes(bind_info.timestamp().as_slice().try_into().unwrap());
-    let from_addr = calculate_from_address(&from_args, network);
+    let timestamp = u64::from_le_bytes(
+        bind_info
+            .timestamp()
+            .as_slice()
+            .try_into()
+            .map_err(|e| format!("parse timestamp failed: {e}"))?,
+    );
     let to_addr = calculate_address(&output_lock_script.into(), network);
 
-    Ok((from_addr.to_string(), to_addr.to_string(), timestamp))
+    // verify sig and recover from address
+    let message = format!("0x{}", hex::encode(bind_info_bytes));
+    // raw neuron signature not Signature Object
+    let from_addr = if sig_bytes.len() == 65 {
+        let message = format!("Nervos Message:{message}");
+        let message_hash = ckb_hash::blake2b_256(message.as_bytes());
+        let mut sig: [u8; 64] = [0; 64];
+        sig.copy_from_slice(&sig_bytes[0..64]);
+        let recovery_id: u8 = sig_bytes[64];
+        let ret = recover(message_hash, sig, recovery_id);
+        if let Err(_e) = ret {
+            return Err("recover error".to_string());
+        }
+        let pubkey = ret.unwrap();
+        let pubkey_hash = ckb_hash::blake2b_256(pubkey.serialize());
+        let from_args = pubkey_hash[0..20].to_vec();
+        calculate_from_address(&from_args, network).to_string()
+    } else {
+        // sig is Signature Object
+
+        // sig arg must no 0x prefix
+        let sig_arg = hex::encode(sig_bytes);
+        // call http://localhost:3000/recover?msg=<msg>&sig=<sig_arg>
+        let ret = reqwest::get(format!(
+            "{recovery_url}/recover?msg={message}&sig={sig_arg}"
+        ))
+        .await;
+        if let Err(e) = ret {
+            return Err(format!("call recover error: {e:?}"));
+        }
+        let resp = ret.unwrap();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("parse json error: {e:?}"))?;
+        json["address"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or("address not found".to_string())?
+    };
+
+    Ok((from_addr, to_addr.to_string(), timestamp))
 }

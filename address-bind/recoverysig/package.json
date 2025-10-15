@@ -1,0 +1,21 @@
+{
+  "name": "recoverysig",
+  "version": "1.0.0",
+  "description": "A service to recover address from signature",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@ckb-ccc/ccc": "0.0.0-canary-20250919105013",
+    "@ckb-ccc/core": "0.0.0-canary-20250919105013",
+    "express": "^5.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5"
+  }
+}

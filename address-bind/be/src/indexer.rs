@@ -111,6 +111,7 @@ pub async fn server(
     db_url: &str,
     start_height: u64,
     listen_port: u16,
+    recovery_url: &str,
 ) -> Result<()> {
     let db = PgPoolOptions::new()
         .max_connections(5)
@@ -182,7 +183,7 @@ pub async fn server(
                 }
 
                 // verify transaction
-                match verify_tx(ckb_client, network_type, &tx.inner).await {
+                match verify_tx(ckb_client, network_type, &tx.inner, recovery_url).await {
                     Ok((from, to, timestamp)) => {
                         info!("from: {from}, to: {to}, timestamp: {timestamp}");
 
