@@ -29,15 +29,38 @@ async function main() {
 
   console.log("bind info: ", bindInfoHex);
 
-  // sign bindInfoHex with Neuron
+  // sign bindInfoHex with from address
   let sig = await signer.signMessage(bindInfoHex);
-  const sigHex = sig.signature;
+  
+  // serialize sig to json string
+  const sigJson = JSON.stringify(sig);
+  console.log("sig: ", sigJson);
 
-  console.log("sig: ", sigHex);
+  // verify sig
+  const sigObj = JSON.parse(sigJson);
+  const isVerified = await signer.verifyMessage(bindInfoHex, sigObj);
+  console.log("is verified: ", isVerified);
 
+  const fromSigner = await ccc.signerFromSignature(cccClient, sigObj, bindInfoHex);
+  const fromAddr = await fromSigner?.getRecommendedAddress();
+  console.log("from addr: ", fromAddr)
+
+  const encoder = new TextEncoder();
+  const sigBytes = encoder.encode(sigJson);
+
+  const sigBytesHex = ccc.hexFrom(sigBytes);
+  console.log("sig bytes: ", sigBytesHex);
+
+  const sigBytes1 = ccc.bytesFrom(sigBytesHex.slice(2), "hex");
+
+  const decoder = new TextDecoder();
+  const sigJsonDecoded = decoder.decode(sigBytes1);
+  console.log("sig json decoded: ", sigJsonDecoded);
+
+  // compose bindinfo and sigbytes into bindInfoWithSig
   const bindInfoWithSig = BindInfoWithSig.from({
     bind_info: bindInfoLike,
-    sig: hexFrom(sigHex)
+    sig: sigBytes
   })
 
   const bindInfoWithSigBytes = bindInfoWithSig.toBytes();
