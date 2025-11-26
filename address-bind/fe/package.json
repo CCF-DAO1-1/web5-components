@@ -8,8 +8,8 @@
     "start": "ts-node src/index.ts"
   },
   "dependencies": {
-    "@ckb-ccc/ccc": "^1.1.21",
-    "@ckb-ccc/core": "^1.12.2"
+    "@ckb-ccc/ccc": "0.0.0-canary-20250919105013",
+    "@ckb-ccc/core": "0.0.0-canary-20250919105013"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
