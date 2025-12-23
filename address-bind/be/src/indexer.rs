@@ -1,4 +1,8 @@
-use crate::{Indexer, error::AppError, verify::verify_tx};
+use crate::{
+    Indexer,
+    error::AppError,
+    verify::{black_hole_address, verify_tx},
+};
 use ckb_jsonrpc_types::BlockNumber;
 use ckb_sdk::{NetworkType, rpc::CkbRpcClient};
 use color_eyre::{Result, eyre::eyre};
@@ -49,13 +53,15 @@ async fn query_by_to(
     State(state): State<Indexer>,
     Path(to): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Select for each from_addr the row with max height, and within that height the max tx_index
-    // Use DISTINCT ON to ensure we only return the latest record per from_addr
+    // Select latest record per from_addr, then filter by to_addr
     let rows: Vec<(String, i64, i32)> = query_as(
-        "SELECT DISTINCT ON (from_addr) from_addr, height, tx_index
-         FROM bind_info
-         WHERE to_addr = $1
-         ORDER BY from_addr, height DESC, tx_index DESC",
+        "SELECT from_addr, height, tx_index
+         FROM (
+             SELECT DISTINCT ON (from_addr) from_addr, to_addr, height, tx_index
+             FROM bind_info
+             ORDER BY from_addr, height DESC, tx_index DESC
+         ) latest
+         WHERE to_addr = $1",
     )
     .bind(&to)
     .fetch_all(&state.db)
@@ -81,10 +87,14 @@ async fn query_by_to_at_height(
     Path((to, height)): Path<(String, i64)>,
 ) -> Result<impl IntoResponse, AppError> {
     let rows: Vec<(String, i64, i32)> = query_as(
-        "SELECT DISTINCT ON (from_addr) from_addr, height, tx_index
-         FROM bind_info
-         WHERE to_addr = $1 AND height <= $2
-         ORDER BY from_addr, height DESC, tx_index DESC",
+        "SELECT from_addr, height, tx_index
+         FROM (
+             SELECT DISTINCT ON (from_addr) from_addr, to_addr, height, tx_index
+             FROM bind_info
+             WHERE height <= $2
+             ORDER BY from_addr, height DESC, tx_index DESC
+         ) latest
+         WHERE to_addr = $1",
     )
     .bind(&to)
     .bind(height)
@@ -126,11 +136,13 @@ pub async fn server(
 
     // get last sync height
     let mut current_height: u64 =
-        query_as("SELECT height FROM sync_status ORDER BY height DESC LIMIT 1")
-            .fetch_one(&db)
-            .await
-            .map(|r: (i32,)| r.0 as u64)
+        query_as::<_, (i64,)>("SELECT height FROM sync_status ORDER BY height DESC LIMIT 1")
+            .fetch_optional(&db)
+            .await?
+            .map(|r| r.0 as u64)
             .unwrap_or(start_height);
+
+    info!("start_height: {start_height}, current_height: {current_height}");
 
     let indexer = Indexer { db: db.clone() };
 
@@ -149,93 +161,155 @@ pub async fn server(
             .map_err(|e| eyre!("{e}"))
     });
 
+    let ctrlc = tokio::signal::ctrl_c();
+    tokio::pin!(ctrlc);
     loop {
-        // get latest block height
-        if let Ok(tip_block) = ckb_client.get_tip_block_number() {
-            // if already synced to latest height, wait for new block
-            let tip_block = tip_block.value();
-            if current_height >= tip_block {
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            } else if current_height.is_multiple_of(10) {
-                info!(
-                    "tip_block: {tip_block}, current_height: {current_height}, waiting block: {}",
-                    tip_block - current_height
-                );
+        tokio::select! {
+            _ = &mut ctrlc => {
+                return Ok(());
             }
-        } else {
-            sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-
-        // get block by number
-        let ret = ckb_client.get_block_by_number(BlockNumber::from(current_height));
-
-        if let Ok(Some(block)) = ret {
-            let block_timestamp = u64::from(block.header.inner.timestamp);
-
-            // proc transactions in block
-            for (index, tx) in block.transactions.into_iter().enumerate() {
-                // ignore cellbase transaction
-                if index == 0 {
-                    continue;
+            _ = async {
+                if let Ok(tip_block) = ckb_client.get_tip_block_number() {
+                    // if already synced to latest height, wait for new block
+                    let tip_block = tip_block.value();
+                    if current_height >= tip_block {
+                        sleep(Duration::from_secs(1)).await;
+                        return;
+                    } else if current_height.is_multiple_of(10) {
+                        info!(
+                            "tip_block: {tip_block}, current_height: {current_height}, waiting block: {}",
+                            tip_block - current_height
+                        );
+                    }
+                } else {
+                    sleep(Duration::from_secs(1)).await;
+                    return;
                 }
-
-                // verify transaction
-                match verify_tx(ckb_client, network_type, &tx.inner).await {
-                    Ok((from, to, timestamp)) => {
-                        info!("from: {from}, to: {to}, timestamp: {timestamp}");
-
-                        // check timestamp is around current block timestamp, within 20min
-                        if timestamp < block_timestamp - 20 * 60 * 1000
-                            || timestamp > block_timestamp + 20 * 60 * 1000
-                        {
-                            error!(
-                                "timestamp {timestamp} is out of range, block_timestamp: {block_timestamp}"
-                            );
+                let ret = ckb_client.get_block_by_number(BlockNumber::from(current_height));
+                if let Ok(Some(block)) = ret {
+                    let block_timestamp = u64::from(block.header.inner.timestamp);
+                    for (index, tx) in block.transactions.into_iter().enumerate() {
+                        if index == 0 {
                             continue;
                         }
+                        match verify_tx(ckb_client, network_type, &tx.inner).await {
+                            Ok((bind_type, from, to, timestamp)) => {
+                                let bind_type_str = if bind_type == 0 { "bind" } else { "unbind" };
+                                info!(
+                                    "bind_type: {bind_type_str}, from: {from}, to: {to}, timestamp: {timestamp}"
+                                );
 
-                        // insert bind info to db
-                        if let Err(e) = db
+                                // check timestamp is around current block timestamp, within 20min
+                                if timestamp < block_timestamp - 20 * 60 * 1000
+                                    || timestamp > block_timestamp + 20 * 60 * 1000
+                                {
+                                    error!(
+                                        "timestamp {timestamp} is out of range, block_timestamp: {block_timestamp}"
+                                    );
+                                    continue;
+                                }
+                                if bind_type == 0 {
+                                    // insert bind info to db
+                                    if let Err(e) = db
+                                        .execute(query(
+                                            "INSERT INTO bind_info (from_addr, to_addr, timestamp, height, tx_index)
+                                            VALUES ($1, $2, $3, $4, $5)"
+                                        )
+                                        .bind(&from)
+                                        .bind(&to)
+                                        .bind(timestamp as i64)
+                                        .bind(current_height as i64)
+                                        .bind(index as i32))
+                                    .await {
+                                        let es = e.to_string();
+                                        if es.contains("duplicate key value violates unique constraint") {
+                                            warn!("duplicate bind ignored: {e}");
+                                        } else {
+                                            panic!("Failed to insert bind info: {e}");
+                                        }
+                                    }
+                                } else {
+                                    // unbind
+                                    // query latest to address bind by from
+                                    let row_res = query_as(
+                                        "SELECT to_addr, height, tx_index
+                                        FROM bind_info
+                                        WHERE from_addr = $1
+                                        ORDER BY height DESC, tx_index DESC
+                                        LIMIT 1",
+                                    )
+                                    .bind(&from)
+                                    .fetch_optional(&db)
+                                    .await;
+                                    let row: Option<(String, i64, i32)> = match row_res {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            error!("exec sql failed: {e}");
+                                            return;
+                                        }
+                                    };
+                                    if let Some((binded_to, height, tx_index)) = row {
+                                        info!(
+                                            "latest bind: from: {from}, to: {binded_to}, height: {height}, tx_index: {tx_index}"
+                                        );
+                                        if binded_to != to {
+                                            error!(
+                                                "unbind address not match, binded_to: {binded_to}, unbind_to: {to}"
+                                            );
+                                            continue;
+                                        }
+                                        // bind from addr to black hole address to impl unbind
+                                        let black_hole_addr = black_hole_address(network_type);
+                                        if let Err(e) = db
+                                        .execute(query(
+                                            "INSERT INTO bind_info (from_addr, to_addr, timestamp, height, tx_index)
+                                            VALUES ($1, $2, $3, $4, $5)"
+                                        )
+                                        .bind(&from)
+                                        .bind(black_hole_addr.to_string())
+                                        .bind(timestamp as i64)
+                                        .bind(current_height as i64)
+                                        .bind(index as i32))
+                                    .await {
+                                        let es = e.to_string();
+                                        if es.contains("duplicate key value violates unique constraint") {
+                                            warn!("duplicate unbind ignored: {e}");
+                                        } else {
+                                            panic!("Failed to insert unbind info: {e}");
+                                        }
+                                    }
+                                    } else {
+                                        error!("no bind found for from: {from}");
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                if e.contains("get_tx failed")
+                                    || e.contains("sig_bytes")
+                                    || e.contains("timestamp is out of range")
+                                {
+                                    error!("verify_tx {} is failed, err: {e}", tx.hash);
+                                }
+                            }
+                        }
+                    }
+
+                    // update sync height
+                    // not too frequently
+                    if current_height.is_multiple_of(100)
+                        && let Err(e) = db
                             .execute(query(
-                                "INSERT INTO bind_info (from_addr, to_addr, timestamp, height, tx_index)
-                                 VALUES ($1, $2, $3, $4, $5)"
+                                "INSERT INTO sync_status (height) VALUES ($1) ON CONFLICT (height) DO NOTHING;"
                             )
-                            .bind(&from)
-                            .bind(&to)
-                            .bind(timestamp as i64)
-                            .bind(current_height as i64)
-                            .bind(index as i32))
-                        .await {
-                            error!("Failed to insert bind info: {e}");
-                        }
+                            .bind(current_height as i64))
+                            .await
+                    {
+                        error!("Failed to update sync status: {e}");
                     }
-                    Err(e) => {
-                        if e.contains("get_tx failed")
-                            || e.contains("sig_bytes")
-                            || e.contains("timestamp is out of range")
-                        {
-                            error!("verify_tx {} is failed, err: {e}", tx.hash);
-                        }
-                    }
+                    current_height += 1;
                 }
-            }
-
-            // update sync height
-            // not too frequently
-            if current_height.is_multiple_of(100)
-                && let Err(e) = db
-                    .execute(query(
-                        "INSERT INTO sync_status (height) VALUES ($1) ON CONFLICT (height) DO NOTHING;"
-                    )
-                    .bind(current_height as i64))
-                    .await
-            {
-                error!("Failed to update sync status: {e}");
-            }
-
-            current_height += 1;
+            } => {}
         }
     }
 }
@@ -258,8 +332,11 @@ async fn test_one() -> Result<()> {
 
             // verify transaction
             match verify_tx(&ckb_client, NetworkType::Testnet, &tx.inner).await {
-                Ok((from, to, timestamp)) => {
-                    info!("from: {from}, to: {to}, timestamp: {timestamp}");
+                Ok((bind_type, from, to, timestamp)) => {
+                    let bind_type_str = if bind_type == 0 { "bind" } else { "unbind" };
+                    info!(
+                        "bind_type: {bind_type_str}, from: {from}, to: {to}, timestamp: {timestamp}"
+                    );
                     // check timestamp is around current block timestamp, within 20min
                     if timestamp < block_timestamp - 20 * 60 * 1000
                         || timestamp > block_timestamp + 20 * 60 * 1000
@@ -339,6 +416,13 @@ mod tests {
         db.execute(query(&format!("INSERT INTO {s}.bind_info (from_addr, to_addr, timestamp, height, tx_index) VALUES ($1, $2, $3, $4, $5)"))
             .bind("F2").bind("T1").bind(6_i64).bind(100_i64).bind(6_i32)).await?; // latest by height then tx_index
 
+        // F3 bind T2
+        db.execute(query(&format!("INSERT INTO {s}.bind_info (from_addr, to_addr, timestamp, height, tx_index) VALUES ($1, $2, $3, $4, $5)"))
+            .bind("F3").bind("T2").bind(6_i64).bind(100_i64).bind(6_i32)).await?;
+        // F3 bind T3
+        db.execute(query(&format!("INSERT INTO {s}.bind_info (from_addr, to_addr, timestamp, height, tx_index) VALUES ($1, $2, $3, $4, $5)"))
+            .bind("F3").bind("T3").bind(6_i64).bind(101_i64).bind(6_i32)).await?;
+
         Ok(())
     }
 
@@ -394,6 +478,22 @@ mod tests {
         assert_eq!(to, "T1");
         assert_eq!(*height, 103_i64);
         assert_eq!(*tx_index, 5_i32);
+
+        // T2 will no bind info
+        let sql = format!(
+            "SELECT from_addr, height, tx_index
+                FROM (
+                    SELECT DISTINCT ON (from_addr) from_addr, to_addr, height, tx_index
+                    FROM {s}.bind_info
+                    ORDER BY from_addr, height DESC, tx_index DESC
+                ) latest
+                WHERE to_addr = $1"
+        );
+        let rows: Vec<(String, i64, i32)> = query_as(&sql).bind("T2").fetch_all(&db).await?;
+
+        // T2 will no bind info
+        assert!(rows.is_empty());
+
         Ok(())
     }
 
@@ -409,10 +509,14 @@ mod tests {
 
         // Same data as before; cut off at height <= 100
         let sql = format!(
-            "SELECT DISTINCT ON (from_addr) from_addr, height, tx_index
-                         FROM {s}.bind_info
-                         WHERE to_addr = $1 AND height <= $2
-                         ORDER BY from_addr, height DESC, tx_index DESC"
+            "SELECT from_addr, height, tx_index
+         FROM (
+             SELECT DISTINCT ON (from_addr) from_addr, to_addr, height, tx_index
+             FROM {s}.bind_info
+             WHERE height <= $2
+             ORDER BY from_addr, height DESC, tx_index DESC
+         ) latest
+         WHERE to_addr = $1",
         );
         let rows: Vec<(String, i64, i32)> = query_as(&sql)
             .bind("T1")

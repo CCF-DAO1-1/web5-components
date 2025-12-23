@@ -53,16 +53,44 @@ pub fn calculate_from_address(from_args: &[u8], network: NetworkType) -> Address
     Address::new(network, payload, true)
 }
 
+// to address
+pub fn calculate_to_address(to_script: &crate::bind::Script, network: NetworkType) -> Address {
+    let code_hash = H256::from_slice(&to_script.code_hash().raw_data()).unwrap();
+    let args = to_script.args().raw_data().to_vec();
+    let hash_type = to_script.hash_type();
+    let lock_script = packed::Script::new_builder()
+        .code_hash(code_hash.pack())
+        .args(Bytes::from(args).pack())
+        .hash_type(hash_type)
+        .build();
+    let payload = AddressPayload::from(lock_script);
+    Address::new(network, payload, true)
+}
+
 pub fn calculate_address(lock_script: &packed::Script, network: NetworkType) -> Address {
     let payload = AddressPayload::from(lock_script.clone());
     Address::new(network, payload, true)
 }
 
+pub fn black_hole_address(network: NetworkType) -> Address {
+    let code_hash =
+        H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+    let args = Bytes::from(vec![]).pack();
+    let hash_type = ScriptHashType::Type;
+    let lock_script = packed::Script::new_builder()
+        .code_hash(code_hash.pack())
+        .args(args)
+        .hash_type(hash_type.into())
+        .build();
+    calculate_address(&lock_script, network)
+}
+
+// return (type: 0 bind, 1 unbind, from_address, to_address, timestamp)
 pub async fn verify_tx(
     ckb_client: &CkbRpcClient,
     network: NetworkType,
     tx: &Transaction,
-) -> Result<(String, String, u64), String> {
+) -> Result<(u64, String, String, u64), String> {
     let inputs_count = tx.inputs.len();
     let outputs_count = tx.outputs.len();
 
@@ -105,8 +133,21 @@ pub async fn verify_tx(
     let sig = bind_info_with_sig.sig();
     let sig_bytes = sig.raw_data().to_vec();
     let bind_info_bytes = bind_info.as_slice();
-    if sig_bytes.len() != 65 {
-        return Err("sig_bytes len not equal 65".to_string());
+    let timestamp = u64::from_le_bytes(
+        bind_info
+            .timestamp()
+            .as_slice()
+            .try_into()
+            .map_err(|e| format!("parse timestamp failed: {e}"))?,
+    );
+
+    // if sig is empty, it is unbind
+    // from addr is bindinfo.to
+    // to addr is lock script of tx
+    if sig_bytes.is_empty() {
+        let to_addr = calculate_address(&output_lock_script.into(), network);
+        let from_addr = calculate_to_address(&bind_info.to(), network);
+        return Ok((1, from_addr.to_string(), to_addr.to_string(), timestamp));
     }
 
     // transfer is to of bind info
@@ -115,6 +156,10 @@ pub async fn verify_tx(
         || bind_info.to().args().raw_data() != output_lock_script.args.as_bytes()
     {
         return Err("bind_info_to not equal output_lock_script".to_string());
+    }
+
+    if sig_bytes.len() != 65 {
+        return Err("sig_bytes len not equal 65".to_string());
     }
 
     // recover from address by sig
@@ -136,5 +181,5 @@ pub async fn verify_tx(
     let from_addr = calculate_from_address(&from_args, network);
     let to_addr = calculate_address(&output_lock_script.into(), network);
 
-    Ok((from_addr.to_string(), to_addr.to_string(), timestamp))
+    Ok((0, from_addr.to_string(), to_addr.to_string(), timestamp))
 }

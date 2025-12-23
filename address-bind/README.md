@@ -48,3 +48,12 @@ scanner:
 api:
 1. query bind relationship by from address.
 2. query bind relationship by to address.
+
+
+## unbind
+
+for unbind, reuse BindInfo.
+to script of the address to unbind, sig is empty.
+
+backend will check if the bind relationship exists.
+if exists, insert bind record with from address and black hole address.

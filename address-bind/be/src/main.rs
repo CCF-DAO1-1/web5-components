@@ -66,9 +66,10 @@ async fn main() {
 
             let ret = verify::verify_tx(&ckb_client, network_type, &tx).await;
             match ret {
-                Ok((from, to, timestamp)) => {
+                Ok((bind_type, from, to, timestamp)) => {
+                    let bind_type_str = if bind_type == 0 { "bind" } else { "unbind" };
                     println!(
-                        "tx {tx_hash} has valid bind info, from: {from}, to: {to}, timestamp: {timestamp}"
+                        "tx {tx_hash} has valid bind info, bind_type: {bind_type_str}, from: {from}, to: {to}, timestamp: {timestamp}"
                     );
                 }
                 Err(e) => {
