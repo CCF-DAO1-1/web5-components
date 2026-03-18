@@ -1,0 +1,57 @@
+[package]
+name = "address-bind-be"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+ckb-hash = "0.202"
+ckb-jsonrpc-types = "0.202"
+ckb-sdk = "4.4"
+ckb-types = "0.202"
+clap = { version = "4.5", features = ["derive"] }
+color-eyre = "0.6"
+common_x = { version = "0.8", default-features = false, features = [
+    "log",
+    "restful",
+] }
+dotenvy = "0.15"
+hex = "0.4"
+molecule = { version = "0.8", default-features = false }
+secp256k1 = { version = "0.30", features = ["recovery"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace", "timeout"] }
+tracing = "0.1"
+
+[lints.clippy]
+missing_const_for_fn = "warn"
+
+[lints.rust]
+unsafe_code = "forbid"
+# missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+# unused_crate_dependencies = "warn"
+unused_extern_crates = "warn"
+
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.fast]
+inherits = "release"
+opt-level = 3
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+
+[profile.release]
+debug = false
+lto = "fat"
+opt-level = 3
+codegen-units = 1

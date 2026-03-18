@@ -1,0 +1,20 @@
+# smt
+
+build merkle tree with list of lock script hash.
+
+calc smt root hash and proof of given user.
+
+## Usage
+
+```
+$ ./target/debug/smt --white-list example/white_list.json proof --lock-hash 0xabbfbf9155679b5d1399b4aa04dac6f3f71e63fd3ae4759110a415169eefeeed
+insert lock_hash_item: 1380b63765aacc617854fd83434a90caa535ba7117fbf3d9d01ba7f1d472b561
+insert lock_hash_item: e20182d70b2c498483d626f9f558050a8e0df731bbafdfa277e34e3a0a745036
+insert lock_hash_item: 7c9b0e612253e09f74501e84982cedbf099ee836f158de22d4a294c9e43a294b
+insert lock_hash_item: eb5b414a4db5f571990ad0912d14b0711f88720ea9b1ca67d59f09a44b879071
+insert lock_hash_item: abbfbf9155679b5d1399b4aa04dac6f3f71e63fd3ae4759110a415169eefeeed
+smt_root_hash: 7e602b84ea55d05337c674f99c279b674a454c7186f0b8fc308291783dd59245
+give proof of lock_hash: abbfbf9155679b5d1399b4aa04dac6f3f71e63fd3ae4759110a415169eefeeed
+proof: 4c4fff50378f5d8873eed84dbfd327bd9b258f2e0a262364b6fd5cb0550e799dba067da4
+verify success!
+```

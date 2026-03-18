@@ -1,0 +1,20 @@
+{
+  "name": "address-bind-fe",
+  "version": "1.0.0",
+  "description": "Address binding frontend",
+  "main": "dist/bind.js",
+  "scripts": {
+    "build": "tsc",
+    "bind": "ts-node src/bind.ts",
+    "unbind": "ts-node src/unbind.ts"
+  },
+  "dependencies": {
+    "@ckb-ccc/ccc": "^1.1.21",
+    "@ckb-ccc/core": "^1.12.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "ts-node": "^10.9.2",
+    "@types/node": "^24.10.1"
+  }
+}
