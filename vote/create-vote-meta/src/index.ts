@@ -18,7 +18,7 @@ async function main() {
   const candidates = ["no", "not bad", "good", "awesome"]
 
   // platform supply
-  const whiteList = [
+  const voterList = [
         "0x1380b63765aacc617854fd83434a90caa535ba7117fbf3d9d01ba7f1d472b561",
         "0xe20182d70b2c498483d626f9f558050a8e0df731bbafdfa277e34e3a0a745036",
         "0x7c9b0e612253e09f74501e84982cedbf099ee836f158de22d4a294c9e43a294b",

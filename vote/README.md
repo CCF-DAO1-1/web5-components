@@ -12,9 +12,9 @@ proposer edit vote info, include:
 2. candidates
 
 platform supply:
-1. white list of users who can vote
+1. Voter Eligibility list
 2. start and end time (ckb epoch) of vote
-3. build merkle tree with white list, and calc merkel root hash.
+3. build merkle tree with Voter Eligibility list, and calc merkel root hash.
 
 finally, fill vote meta:
 ```
@@ -34,7 +34,7 @@ put VoteMeta into a cell, and send tx, get outpoint of this cell.
 ## user vote
 
 1. user connect wallet.
-2. if user in white list, get a merkel tree proof.
+2. if user in Voter Eligibility list, get a merkel tree proof.
 3. build a tx, include:
     1. vote meta cell as celldep.
     2. type script: codehash is vote type script. args is blake160 hash of vote meta cell out point.

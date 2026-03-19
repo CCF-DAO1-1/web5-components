@@ -7,8 +7,8 @@ use sparse_merkle_tree::{default_store::DefaultStore, SparseMerkleTree, H256, Co
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(short, long, default_value = "example/white_list.json")]
-    white_list: String,
+    #[arg(short, long, default_value = "example/voter_list.json")]
+    voter_list: String,
     #[command(subcommand)]
     command: Commands,
 }
@@ -38,13 +38,13 @@ fn main() {
             }
             let lock_hash = hex::decode(lock_hash).unwrap();
 
-            let white_list = std::fs::read_to_string(cli.white_list).unwrap();
-            let white_list: serde_json::Value = serde_json::from_str(&white_list).unwrap();
-            let white_list = white_list["white_list"].as_array().unwrap();
-            
-            // get all values in white_list and build merkle tree
+            let voter_list = std::fs::read_to_string(cli.voter_list).unwrap();
+            let voters: serde_json::Value = serde_json::from_str(&voter_list).unwrap();
+            let voters = voters["voter_list"].as_array().unwrap();
+
+            // get all values in voter_list and build merkle tree
             let mut smt_tree = CkbSMT::default();
-            for lock_hash_item in white_list {
+            for lock_hash_item in voters {
                 let mut lock_hash_item = lock_hash_item.as_str().unwrap().to_string();
                 if lock_hash_item.starts_with("0x") {
                     lock_hash_item = lock_hash_item[2..].to_string();

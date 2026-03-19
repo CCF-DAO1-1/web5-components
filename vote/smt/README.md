@@ -7,7 +7,7 @@ calc smt root hash and proof of given user.
 ## Usage
 
 ```
-$ ./target/debug/smt --white-list example/white_list.json proof --lock-hash 0xabbfbf9155679b5d1399b4aa04dac6f3f71e63fd3ae4759110a415169eefeeed
+$ ./target/debug/smt --voter-list example/voter_list.json proof --lock-hash 0xabbfbf9155679b5d1399b4aa04dac6f3f71e63fd3ae4759110a415169eefeeed
 insert lock_hash_item: 1380b63765aacc617854fd83434a90caa535ba7117fbf3d9d01ba7f1d472b561
 insert lock_hash_item: e20182d70b2c498483d626f9f558050a8e0df731bbafdfa277e34e3a0a745036
 insert lock_hash_item: 7c9b0e612253e09f74501e84982cedbf099ee836f158de22d4a294c9e43a294b
