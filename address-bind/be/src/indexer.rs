@@ -173,7 +173,8 @@ pub async fn server(
                 return Ok(());
             }
             _ = async {
-                if let Ok(tip_block) = ckb_client.get_tip_block_number() {
+                let ret = ckb_client.get_tip_block_number();
+                if let Ok(tip_block) = ret {
                     // if already synced to latest height, wait for new block
                     let tip_block = tip_block.value();
                     if current_height >= tip_block {
@@ -186,6 +187,7 @@ pub async fn server(
                         );
                     }
                 } else {
+                    info!("get tip block number failed: {:?}", ret);
                     sleep(Duration::from_secs(1)).await;
                     return;
                 }
