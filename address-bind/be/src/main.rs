@@ -57,12 +57,15 @@ async fn main() {
             let ckb_client = CkbRpcClient::new(cli.ckb_url.as_str());
 
             let mut tx_hash = tx_hash.clone();
-            if tx_hash.starts_with("0x") {
+            if tx_hash.len() >= 2 && tx_hash.starts_with("0x") {
                 tx_hash = tx_hash[2..].to_string();
             }
-            let tx_hash_bytes = hex::decode(tx_hash).unwrap();
-            let tx_hash = H256::from_slice(&tx_hash_bytes).unwrap();
-            let tx = verify::get_tx(&ckb_client, tx_hash.clone()).await.unwrap();
+            let tx_hash_bytes = hex::decode(&tx_hash).expect("Invalid hex string");
+            let tx_hash =
+                H256::from_slice(&tx_hash_bytes).expect("Invalid transaction hash length");
+            let tx = verify::get_tx(&ckb_client, tx_hash.clone())
+                .await
+                .expect("Failed to get transaction");
 
             let ret = verify::verify_tx(&ckb_client, network_type, &tx).await;
             match ret {

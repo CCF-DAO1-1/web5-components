@@ -39,7 +39,13 @@ fn recover(msg_digest: [u8; 32], sig: [u8; 64], recovery_id: u8) -> Result<Publi
 }
 
 // from address must be secp256/blake160
-pub fn calculate_from_address(from_args: &[u8], network: NetworkType) -> Address {
+pub fn calculate_from_address(from_args: &[u8], network: NetworkType) -> Result<Address, String> {
+    if from_args.len() != 20 {
+        return Err(format!(
+            "from_args length must be 20, got {}",
+            from_args.len()
+        ));
+    }
     let code_hash =
         H256::from_str("9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8").unwrap();
     let args = H160::from_slice(from_args).unwrap().as_bytes().to_owned();
@@ -50,12 +56,22 @@ pub fn calculate_from_address(from_args: &[u8], network: NetworkType) -> Address
         .hash_type(hash_type.into())
         .build();
     let payload = AddressPayload::from(lock_script);
-    Address::new(network, payload, true)
+    Ok(Address::new(network, payload, true))
 }
 
 // to address
-pub fn calculate_to_address(to_script: &crate::bind::Script, network: NetworkType) -> Address {
-    let code_hash = H256::from_slice(&to_script.code_hash().raw_data()).unwrap();
+pub fn calculate_to_address(
+    to_script: &crate::bind::Script,
+    network: NetworkType,
+) -> Result<Address, String> {
+    let code_hash_raw = to_script.code_hash().raw_data();
+    if code_hash_raw.len() != 32 {
+        return Err(format!(
+            "code_hash length must be 32, got {}",
+            code_hash_raw.len()
+        ));
+    }
+    let code_hash = H256::from_slice(&code_hash_raw).unwrap();
     let args = to_script.args().raw_data().to_vec();
     let hash_type = to_script.hash_type();
     let lock_script = packed::Script::new_builder()
@@ -64,7 +80,7 @@ pub fn calculate_to_address(to_script: &crate::bind::Script, network: NetworkTyp
         .hash_type(hash_type)
         .build();
     let payload = AddressPayload::from(lock_script);
-    Address::new(network, payload, true)
+    Ok(Address::new(network, payload, true))
 }
 
 pub fn calculate_address(lock_script: &packed::Script, network: NetworkType) -> Address {
@@ -99,6 +115,10 @@ pub async fn verify_tx(
         return Err("inputs_count or outputs_count not equal 1".to_string());
     }
 
+    if tx.witnesses.is_empty() {
+        return Err("witnesses is empty".to_string());
+    }
+
     // extract bind info with sig from witness
     let witness = tx.witnesses[0].clone();
     let witness_bytes = witness.into_bytes();
@@ -120,7 +140,17 @@ pub async fn verify_tx(
     let pre_tx = get_tx(ckb_client, pre_tx_hash)
         .await
         .map_err(|e| format!("get_tx failed: {e}"))?;
-    let pre_output = pre_tx.outputs[pre_index as usize].clone();
+    let pre_output = pre_tx
+        .outputs
+        .get(pre_index as usize)
+        .ok_or_else(|| {
+            format!(
+                "pre_tx output index {} out of bounds, outputs count: {}",
+                pre_index,
+                pre_tx.outputs.len()
+            )
+        })?
+        .clone();
     let pre_output_lock_script = pre_output.lock.clone();
     let output_lock_script = tx.outputs[0].lock.clone();
 
@@ -146,7 +176,7 @@ pub async fn verify_tx(
     // to addr is lock script of tx
     if sig_bytes.is_empty() {
         let to_addr = calculate_address(&output_lock_script.into(), network);
-        let from_addr = calculate_to_address(&bind_info.to(), network);
+        let from_addr = calculate_to_address(&bind_info.to(), network)?;
         return Ok((1, from_addr.to_string(), to_addr.to_string(), timestamp));
     }
 
@@ -170,15 +200,21 @@ pub async fn verify_tx(
     sig.copy_from_slice(&sig_bytes[0..64]);
     let recovery_id: u8 = sig_bytes[64];
     let ret = recover(message_hash, sig, recovery_id);
-    if let Err(_e) = ret {
-        return Err("recover error".to_string());
-    }
-    let pubkey = ret.unwrap();
+    let pubkey = match ret {
+        Ok(pk) => pk,
+        Err(_e) => return Err("recover error".to_string()),
+    };
     let pubkey_hash = ckb_hash::blake2b_256(pubkey.serialize());
     let from_args = pubkey_hash[0..20].to_vec();
 
-    let timestamp = u64::from_le_bytes(bind_info.timestamp().as_slice().try_into().unwrap());
-    let from_addr = calculate_from_address(&from_args, network);
+    let timestamp = u64::from_le_bytes(
+        bind_info
+            .timestamp()
+            .as_slice()
+            .try_into()
+            .map_err(|e| format!("parse timestamp failed: {e}"))?,
+    );
+    let from_addr = calculate_from_address(&from_args, network)?;
     let to_addr = calculate_address(&output_lock_script.into(), network);
 
     Ok((0, from_addr.to_string(), to_addr.to_string(), timestamp))

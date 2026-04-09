@@ -1,4 +1,4 @@
-FROM m.daocloud.io/docker.io/rust:slim-bullseye AS buildstage
+FROM rust:slim-bullseye AS buildstage
 WORKDIR /build
 ENV PROTOC_NO_VENDOR 1
 RUN rustup component add rustfmt && \
@@ -9,7 +9,10 @@ RUN rustup component add rustfmt && \
 COPY . /build/
 RUN cargo build --release
 
-FROM m.daocloud.io/docker.io/rust:slim-bullseye
+FROM debian:bullseye-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libssl1.1 && \
+    rm -rf  /var/log/*log /var/lib/apt/lists/* /var/log/apt/* /var/lib/dpkg/*-old /var/cache/debconf/*-old
 RUN useradd -m address-bind-be
 USER address-bind-be
 COPY --from=buildstage /build/target/release/address-bind-be /usr/bin/

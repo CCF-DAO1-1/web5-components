@@ -15,6 +15,7 @@ use common_x::restful::{
     },
     ok,
 };
+use http::StatusCode;
 use sqlx::{Executor, postgres::PgPoolOptions, query, query_as};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -152,7 +153,10 @@ pub async fn server(
             .route("/by_from/{from}", get(query_by_from))
             .route("/by_to/{to}", get(query_by_to))
             .route("/by_to_at_height/{to}/{height}", get(query_by_to_at_height))
-            .layer((TimeoutLayer::new(Duration::from_secs(10)),))
+            .layer((TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                Duration::from_secs(10),
+            ),))
             .layer(CorsLayer::permissive())
             .with_state(indexer);
 
@@ -225,7 +229,8 @@ pub async fn server(
                                         if es.contains("duplicate key value violates unique constraint") {
                                             warn!("duplicate bind ignored: {e}");
                                         } else {
-                                            panic!("Failed to insert bind info: {e}");
+                                            error!("Failed to insert bind info: {e}");
+                                            continue;
                                         }
                                     }
                                 } else {
@@ -275,7 +280,8 @@ pub async fn server(
                                         if es.contains("duplicate key value violates unique constraint") {
                                             warn!("duplicate unbind ignored: {e}");
                                         } else {
-                                            panic!("Failed to insert unbind info: {e}");
+                                            error!("Failed to insert unbind info: {e}");
+                                            continue;
                                         }
                                     }
                                     } else {
